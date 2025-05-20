@@ -3,9 +3,9 @@ import qr from "qr-image";
 
 
 const token = "7686186521:AAG2NTCyTO2sZNscYuBdu7_tQw5OA1gaSVI";
-const bot = new TelegramBot(token, { polling: true });
+const bot = new TelegramBot(token, { polling: process.env.NODE_ENV !== 'test' });
 const Rate_Limit = 10;
-const rateLimit = new Map();
+export const rateLimit = new Map();
 
 
 bot.setMyCommands([
@@ -13,7 +13,8 @@ bot.setMyCommands([
 	{command:'/help', description: 'Помощь'}
 ])
 
-function isValidUrl(string) {
+// Export functions for testing
+export function isValidUrl(string) {
     try {
         const url = new URL(string);
         return ['http:', 'https:'].includes(url.protocol);
@@ -21,7 +22,8 @@ function isValidUrl(string) {
         return false;
     }
 }
-function normalizeUrl(input) {
+
+export function normalizeUrl(input) {
     if (/^https?:\/\//i.test(input)) {
         return input;
     }
@@ -43,7 +45,7 @@ async function generateQrCode(url) {
     });
 }
 
-function checkRateLimit(userId) {
+export function checkRateLimit(userId) {
 	const now = Date.now();
 	const timestamps = rateLimit.get(userId) || [];
 	const recent = timestamps.filter(t => now - t < 60000);
@@ -153,5 +155,6 @@ bot.on('polling_error', (error) => {
     console.error('Polling error:', error);
 });
 
-
-console.log('Bot started...');
+if (process.env.NODE_ENV !== 'test') {
+    console.log('Bot started...');
+}
