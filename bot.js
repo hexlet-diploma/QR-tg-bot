@@ -1,29 +1,51 @@
 import TelegramBot from "node-telegram-bot-api";
 import qr from "qr-image";
+import { config } from './config.js';
+import { db } from './db/database.js';
 
-
-const token = "7686186521:AAG2NTCyTO2sZNscYuBdu7_tQw5OA1gaSVI";
-const bot = new TelegramBot(token, { polling: process.env.NODE_ENV !== 'test' });
+const bot = new TelegramBot(config.botToken, { polling: true });
 const Rate_Limit = 10;
-export const rateLimit = new Map();
+const rateLimit = new Map();
 
+// Initialize database
+await db.init();
+
+// Update daily stats every hour
+setInterval(async () => {
+    try {
+        await db.updateDailyStats();
+    } catch (error) {
+        console.error('Error updating daily stats:', error);
+    }
+}, 3600000); // 1 hour
 
 bot.setMyCommands([
 	{command:'/start', description: 'Начальное приветствие'},
 	{command:'/help', description: 'Помощь'}
 ])
 
-// Export functions for testing
-export function isValidUrl(string) {
+function isValidUrl(string) {
     try {
         const url = new URL(string);
-        return ['http:', 'https:'].includes(url.protocol);
+        // Check if it's a valid URL with http/https protocol
+        if (!['http:', 'https:'].includes(url.protocol)) {
+            return false;
+        }
+        // Check if it has a valid hostname (at least one dot for domain)
+        if (!url.hostname.includes('.')) {
+            return false;
+        }
+        // Check if the hostname is not just a TLD
+        const parts = url.hostname.split('.');
+        if (parts.length < 2 || parts[0].length === 0) {
+            return false;
+        }
+        return true;
     } catch (err) {
         return false;
     }
 }
-
-export function normalizeUrl(input) {
+function normalizeUrl(input) {
     if (/^https?:\/\//i.test(input)) {
         return input;
     }
@@ -45,7 +67,22 @@ async function generateQrCode(url) {
     });
 }
 
-export function checkRateLimit(userId) {
+// Функция для экранирования специальных символов в Markdown
+function escapeMarkdown(text) {
+    return text.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
+}
+
+// Функция для безопасного отображения URL
+function formatUrl(url) {
+    try {
+        const urlObj = new URL(url);
+        return `[${escapeMarkdown(url)}](${escapeMarkdown(url)})`;
+    } catch (e) {
+        return escapeMarkdown(url);
+    }
+}
+
+function checkRateLimit(userId) {
 	const now = Date.now();
 	const timestamps = rateLimit.get(userId) || [];
 	const recent = timestamps.filter(t => now - t < 60000);
@@ -59,31 +96,48 @@ export function checkRateLimit(userId) {
 
 
 async function handleError(chatId, error) {
-	console.error(`Error in chat ${chatId}:`, error);
-	await bot.sendMessage(
-	  chatId, 
-	  'Произошла ошибка при генерации QR-кода. Пожалуйста, попробуйте еще раз.'
-	);
+    console.error(`Error in chat ${chatId}:`, error);
+    
+    let errorMessage = 'Произошла ошибка при генерации QR-кода. ';
+    
+    if (error.message.includes('parse entities')) {
+        errorMessage += 'Проблема с форматированием ссылки. Попробуйте отправить ссылку без специальных символов.';
+    } else if (error.message.includes('rate limit')) {
+        errorMessage += 'Слишком много запросов. Пожалуйста, подождите минуту.';
+    } else if (error.message.includes('invalid url')) {
+        errorMessage += 'Некорректный формат ссылки. Пример: example.com или https://example.com';
+    } else {
+        errorMessage += 'Пожалуйста, попробуйте еще раз.';
+    }
+    
+    await bot.sendMessage(chatId, errorMessage);
 }
 
 bot.onText(/\/start/, (msg) => {
     const chatId = msg.chat.id;
-	const welcomeSticker = 'https://tlgrm.ru/_/stickers/5fb/e86/5fbe8646-6371-463c-ba7d-bbc08ab0b860/6.webp';
     const welcomeMessage = `
-
 🛠 *Добро пожаловать в QR Generator Bot!*
 
-Отправьте мне ссылку, и я преобразую её в QR-код!
+Я помогу вам создать QR-код из любой ссылки.
 
-🔹 Примеры:
-example.com
-https://example.com
-http://example.com
+📝 *Как использовать:*
+1. Просто отправьте мне ссылку
+2. Я автоматически исправлю её, если нужно
+3. Вы получите готовый QR-код
 
-📝 *Особенности:*
-Поддержка HTTP/HTTPS, Автоматическое исправление ссылок, Быстрая генерация
+🔹 *Поддерживаемые форматы:*
+• example.com
+• www.example.com
+• https://example.com
+• http://example.com
 
-Используйте /help для справки
+💡 *Особенности:*
+• Автоматическое исправление ссылок
+• Быстрая генерация
+• Поддержка HTTP/HTTPS
+• Максимальная длина: 2000 символов
+
+Используйте /help для подробной справки
     `;
     
     bot.sendMessage(chatId, welcomeMessage, { parse_mode: 'Markdown' });
@@ -92,62 +146,100 @@ http://example.com
 bot.onText(/\/help/, (msg) => {
     const chatId = msg.chat.id;
     const helpMessage = `
-📌 *Как использовать бота:*      
-Просто отправьте мне любую ссылку, я автоматически исправлю её, если нужно и вы получите готовый QR-код!
+📌 *Как использовать бота:*
 
-📝 *Примеры допустимых ссылок:*
-- example.com
-- www.example.com/path
-- https://example.com
-- http://example.net
+1. Отправьте любую ссылку
+2. Бот автоматически:
+   • Проверит корректность ссылки
+   • Добавит протокол, если нужно
+   • Сгенерирует QR-код
 
-🛠 *Технические ограничения:*
-- Максимальная длина ссылки: 2000 символов
-- Поддерживаются только HTTP/HTTPS протоколы
+📝 *Примеры ссылок:*
+• example.com
+• www.example.com/path
+• https://example.com
+• http://example.net
+
+⚠️ *Ограничения:*
+• Максимальная длина: 2000 символов
+• Только HTTP/HTTPS протоколы
+• Не более 10 запросов в минуту
+
+❓ *Если что-то не работает:*
+• Проверьте формат ссылки
+• Убедитесь, что ссылка не слишком длинная
+• Подождите минуту, если превысили лимит запросов
     `;
     
     bot.sendMessage(chatId, helpMessage, { parse_mode: 'Markdown' });
 });
 
 bot.on('message', async (msg) => {
-	if (msg.text?.startsWith('/')) return;
+    if (msg.text?.startsWith('/')) return;
 
     const chatId = msg.chat.id;
-	const userId = msg.from.id;
+    const userId = msg.from.id;
     const messageText = msg.text?.trim();
 
+    // Track user with proper data
+    if (msg.from) {
+        const userData = {
+            user_id: msg.from.id,
+            username: msg.from.username || null,
+            first_name: msg.from.first_name || null,
+            last_name: msg.from.last_name || null
+        };
+        await db.upsertUser(userData);
+    }
 
     if (!messageText || messageText.startsWith('/')) {
         return;
     }
 
+    const startTime = Date.now();
+    let success = false;
+    let errorMessage = null;
+
     try {
         if (messageText.length > 2000) {
-            return bot.sendMessage(chatId, 'Ссылка слишком длинная. Максимум 2000 символов.');
+            errorMessage = 'Ссылка слишком длинная';
+            return bot.sendMessage(chatId, '❌ Ссылка слишком длинная. Максимальная длина - 2000 символов.');
         }
 
         let url;
         try {
             url = normalizeUrl(messageText);
         } catch (e) {
-            return bot.sendMessage(chatId, 'Неверный формат ссылки. Пример: example.com или https://example.com');
+            errorMessage = 'Неверный формат ссылки';
+            return bot.sendMessage(chatId, '❌ Неверный формат ссылки.\n\nПримеры:\n• example.com\n• https://example.com');
         }
 
         if (!isValidUrl(url)) {
-            return bot.sendMessage(chatId, 'Поддерживаются только HTTP/HTTPS ссылки. Пример: https://example.com');
+            errorMessage = 'Некорректная ссылка';
+            return bot.sendMessage(chatId, '❌ Пожалуйста, отправьте корректную ссылку.\n\nПримеры:\n• example.com\n• https://example.com');
+        }
+
+        if (!checkRateLimit(userId)) {
+            errorMessage = 'Превышен лимит запросов';
+            return bot.sendMessage(chatId, '⏳ Слишком много запросов. Пожалуйста, подождите минуту.');
         }
 
         bot.sendChatAction(chatId, 'upload_photo');
 
         const qrImage = await generateQrCode(url);
+        success = true;
 
         await bot.sendPhoto(chatId, qrImage, {
-            caption: `🔗 ${url}`,
-            parse_mode: 'Markdown'
+            caption: `🔗 ${formatUrl(url)}`,
+            parse_mode: 'MarkdownV2'
         });
 
     } catch (error) {
+        errorMessage = error.message;
         handleError(chatId, error);
+    } finally {
+        const responseTime = Date.now() - startTime;
+        await db.logRequest(userId, messageText, success, responseTime, errorMessage);
     }
 });
 
@@ -155,6 +247,4 @@ bot.on('polling_error', (error) => {
     console.error('Polling error:', error);
 });
 
-if (process.env.NODE_ENV !== 'test') {
-    console.log('Bot started...');
-}
+console.log('Bot started...');
