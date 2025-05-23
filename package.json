@@ -1,13 +1,12 @@
 {
-	"name": "QRBotGen",
+	"name": "qr-tg-bot",
 	"version": "1.0.0",
 	"description": "",
 	"main": "index.js",
 	"type": "module",
 	"scripts": {
 		"dev": "nodemon bot.js",
-		"start": "node bot.js",
-		"test": "cross-env NODE_ENV=test node --experimental-vm-modules node_modules/jest/bin/jest.js"
+		"start": "node bot.js"
 	},
 	"keywords": [],
 	"author": "",
@@ -18,12 +17,8 @@
 		"nodemon": "^3.0.2",
 		"path": "^0.12.7",
 		"qr-image": "^3.2.0",
-		"uuid": "^11.1.0"
-	},
-	"devDependencies": {
-		"@babel/preset-env": "^7.23.8",
-		"babel-jest": "^29.7.0",
-		"cross-env": "^7.0.3",
-		"jest": "^29.7.0"
+		"uuid": "^11.1.0",
+		"pg": "^8.11.3",
+		"dotenv": "^16.3.1"
 	}
 }
